@@ -27,3 +27,11 @@ services:
       -public-host localhost:4443
     ports:
       - "4443:4443"
+
+  bigquery:
+    image: ghcr.io/goccy/bigquery-emulator:latest
+    command: >
+      --project=darkwolf-practice-dev
+      --port=9050
+    ports:
+      - "9050:9050"

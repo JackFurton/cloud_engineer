@@ -53,8 +53,12 @@ publish: ## Publish N synthetic events (N=10 by default)
 	cd app && ../$(PY) publisher.py $(N)
 
 .PHONY: process
-process: ## Drain the subscription and archive events to GCS
+process: ## Drain the subscription -> GCS archive + BigQuery
 	cd app && ../$(PY) processor.py
 
+.PHONY: query
+query: ## Run analytical SQL against the BigQuery events table
+	cd app && ../$(PY) query.py
+
 .PHONY: demo
-demo: bootstrap publish process ## Full local run: bootstrap -> publish -> process
+demo: bootstrap publish process query ## Full local run: bootstrap -> publish -> process -> query

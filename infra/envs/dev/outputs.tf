@@ -22,3 +22,8 @@ output "service_account_emails" {
   description = "Workload identities created for the pipeline."
   value       = module.iam.emails
 }
+
+output "analytics_table" {
+  description = "BigQuery table receiving processed events."
+  value       = module.analytics.table_ref
+}

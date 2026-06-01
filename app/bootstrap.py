@@ -8,7 +8,7 @@ resources (same names!) here. Run this once after `make up`.
 import config  # noqa: F401  (import sets the emulator env vars on load)
 
 from google.api_core.exceptions import AlreadyExists
-from google.cloud import pubsub_v1, storage
+from google.cloud import bigquery, pubsub_v1, storage
 
 
 def ensure_topic_and_subscription() -> None:
@@ -47,8 +47,46 @@ def ensure_bucket() -> None:
             raise
 
 
+# Mirrors the schema in infra/modules/bigquery (via the dev env). The emulator
+# table is simpler (no partitioning/clustering) — that's the documented
+# control-plane/data-plane divergence, same as everywhere else in this project.
+BQ_SCHEMA = [
+    bigquery.SchemaField("event_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("sensor_type", "STRING"),
+    bigquery.SchemaField("site", "STRING"),
+    bigquery.SchemaField("severity", "STRING"),
+    bigquery.SchemaField("reading", "FLOAT"),
+    bigquery.SchemaField("event_ts", "TIMESTAMP"),
+    bigquery.SchemaField("ingest_ts", "TIMESTAMP"),
+]
+
+
+def ensure_bigquery() -> None:
+    # Get-then-create (not try-create-catch): the goccy emulator doesn't return a
+    # clean 409 on duplicate creates, so we check existence first to stay idempotent.
+    from google.api_core.exceptions import NotFound
+
+    client = config.bq_client()
+    dataset_fqn = f"{config.PROJECT_ID}.{config.BQ_DATASET}"
+
+    try:
+        client.get_dataset(dataset_fqn)
+        print(f"  dataset exists       {config.BQ_DATASET}")
+    except NotFound:
+        client.create_dataset(bigquery.Dataset(dataset_fqn))
+        print(f"  created dataset      {config.BQ_DATASET}")
+
+    try:
+        client.get_table(config.bq_table_ref())
+        print(f"  table exists         {config.BQ_DATASET}.{config.BQ_TABLE}")
+    except NotFound:
+        client.create_table(bigquery.Table(config.bq_table_ref(), schema=BQ_SCHEMA))
+        print(f"  created table        {config.BQ_DATASET}.{config.BQ_TABLE}")
+
+
 if __name__ == "__main__":
     print("Bootstrapping emulator resources:")
     ensure_topic_and_subscription()
     ensure_bucket()
+    ensure_bigquery()
     print("Done.")

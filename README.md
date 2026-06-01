@@ -49,13 +49,14 @@ make check     # fmt + validate (the fast local gate)
 
 **Runtime layer (run the pipeline locally):**
 ```bash
-make up        # start the Pub/Sub + GCS emulators in Docker
+make up        # start the Pub/Sub + GCS + BigQuery emulators in Docker
 make venv      # one-time: create the Python venv + install deps
-make demo      # bootstrap resources -> publish 10 events -> archive to GCS
+make demo      # bootstrap -> publish -> process (GCS + BQ) -> query
 make down      # stop the emulators
 ```
-You'll see events published, pulled, and written to
-`gs://.../events/site=<site>/severity=<sev>/<id>.json`.
+You'll see events published, pulled, written to
+`gs://.../events/site=<site>/severity=<sev>/<id>.json`, streamed into BigQuery,
+and then queried with SQL.
 
 ## AWS → GCP cheat sheet (you're coming from AWS ADC)
 
@@ -101,13 +102,29 @@ Role tiers, fyi: **primitive** (Owner/Editor/Viewer — too broad, avoid),
 **predefined** (`roles/pubsub.subscriber` — what we use), **custom** (hand-pick
 permissions when predefined is still too wide).
 
+## BigQuery design notes
+
+BigQuery bills **per byte scanned**, so the whole game is reading less data:
+- **Partitioning** (`time_partitioning` on `event_ts`, DAY granularity): a query
+  with `WHERE event_ts >= ...` only scans the matching day-partitions, not the
+  whole table. This is the single biggest cost lever.
+- **Clustering** (`site`, `severity`): within a partition, rows are sorted by
+  these columns so a filter on them reads fewer storage blocks.
+- **Streaming insert** (`tabledata.insertAll`, via `insert_rows_json`): rows are
+  queryable within seconds — what the processor uses. The alternative is batch
+  load jobs (free, but higher latency).
+
+Note the table schema lives in Terraform (`infra/envs/dev/main.tf`, as
+`jsonencode([...])`) — schema-as-code, versioned and reviewed like everything else.
+
 ## Status
 
 - [x] Terraform skeleton: `pubsub` + `storage` modules, `dev` env, validating
 - [x] Local emulator stack (`local/docker-compose.yml`) — Pub/Sub + GCS
 - [x] Python pipeline: publisher → Pub/Sub → processor → GCS archive, running locally
 - [x] `iam` module (service accounts + resource-scoped least-privilege bindings)
-- [ ] `bigquery` module (dataset + table for analytics)
+- [x] `bigquery` module (partitioned + clustered events table) + dataset IAM
+- [x] Processor streams to BigQuery; `query.py` runs analytical SQL
 - [ ] `terraform test` suites with mocked providers
-- [ ] Processor also writes to BigQuery (add emulator)
 - [ ] CI gate (fmt/validate/test) + a `prod` env
+- [ ] Dead-letter failure demo

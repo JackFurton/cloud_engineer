@@ -76,3 +76,38 @@ resource "google_storage_bucket_iam_member" "processor_writer" {
   role   = "roles/storage.objectCreator"
   member = module.iam.members["telemetry-processor"]
 }
+
+# ---------------------------------------------------------------------------
+# Analytics warehouse
+# ---------------------------------------------------------------------------
+
+module "analytics" {
+  source = "../../modules/bigquery"
+
+  project_id                 = var.project_id
+  dataset_id                 = "telemetry"
+  location                   = var.region
+  table_id                   = "events"
+  partition_field            = "event_ts"
+  clustering_fields          = ["site", "severity"]
+  delete_contents_on_destroy = true # dev only
+  labels                     = local.common_labels
+
+  schema = jsonencode([
+    { name = "event_id", type = "STRING", mode = "REQUIRED", description = "Unique event UUID" },
+    { name = "sensor_type", type = "STRING", mode = "NULLABLE", description = "thermal|acoustic|rf|seismic|optical" },
+    { name = "site", type = "STRING", mode = "NULLABLE", description = "Originating site" },
+    { name = "severity", type = "STRING", mode = "NULLABLE", description = "info|warning|critical" },
+    { name = "reading", type = "FLOAT", mode = "NULLABLE", description = "Sensor reading value" },
+    { name = "event_ts", type = "TIMESTAMP", mode = "NULLABLE", description = "When the event occurred" },
+    { name = "ingest_ts", type = "TIMESTAMP", mode = "NULLABLE", description = "When the processor ingested it" },
+  ])
+}
+
+# Processor may read/write data in THIS dataset only — not project-wide BQ access.
+resource "google_bigquery_dataset_iam_member" "processor_bq" {
+  project    = var.project_id
+  dataset_id = module.analytics.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = module.iam.members["telemetry-processor"]
+}

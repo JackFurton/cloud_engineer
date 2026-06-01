@@ -7,11 +7,26 @@ is drained, writing one JSON object per event to the archive bucket.
 Usage:  python processor.py
 """
 
+import datetime
 import json
 
 import config
 
 from google.cloud import pubsub_v1, storage
+
+
+def to_bq_row(event: dict, ingest_ts: float) -> dict:
+    """Shape an event into a BigQuery row. Epoch floats become RFC3339 strings
+    so they land in the TIMESTAMP columns."""
+    return {
+        "event_id": event.get("event_id"),
+        "sensor_type": event.get("sensor_type"),
+        "site": event.get("site"),
+        "severity": event.get("severity"),
+        "reading": event.get("reading"),
+        "event_ts": datetime.datetime.fromtimestamp(event["ts"], datetime.timezone.utc).isoformat(),
+        "ingest_ts": datetime.datetime.fromtimestamp(ingest_ts, datetime.timezone.utc).isoformat(),
+    }
 
 
 def archive_event(bucket, event: dict, message_id: str) -> str:
@@ -34,7 +49,12 @@ def main() -> None:
     storage_client = storage.Client(project=config.PROJECT_ID)
     bucket = storage_client.bucket(config.ARCHIVE_BUCKET)
 
-    print(f"Draining {config.SUBSCRIPTION_ID} -> gs://{config.ARCHIVE_BUCKET}/events/ ...")
+    bq = config.bq_client()
+    table_ref = config.bq_table_ref()
+
+    print(f"Draining {config.SUBSCRIPTION_ID}")
+    print(f"  -> archive: gs://{config.ARCHIVE_BUCKET}/events/")
+    print(f"  -> analytics: {table_ref}")
 
     total = 0
     empty_polls = 0
@@ -49,19 +69,27 @@ def main() -> None:
             continue
         empty_polls = 0
 
+        ingest_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
         ack_ids = []
+        rows = []
         for received in response.received_messages:
             event = json.loads(received.message.data.decode("utf-8"))
             path = archive_event(bucket, event, received.message.message_id)
+            rows.append(to_bq_row(event, ingest_ts))
             ack_ids.append(received.ack_id)
             total += 1
-            print(f"  archived {event['severity']:8} -> {path}")
+            print(f"  {event['severity']:8} -> gcs:{path}")
 
-        # Ack only after a successful write — at-least-once delivery means a
-        # crash before this line just redelivers the message later.
+        # Stream the batch into BigQuery (tabledata.insertAll under the hood).
+        errors = bq.insert_rows_json(table_ref, rows)
+        if errors:
+            raise RuntimeError(f"BigQuery insert failed: {errors}")
+
+        # Ack only after BOTH sinks succeeded — at-least-once delivery means a
+        # crash before this line just redelivers the messages later.
         subscriber.acknowledge(subscription=sub_path, ack_ids=ack_ids)
 
-    print(f"Processed and archived {total} events.")
+    print(f"Processed {total} events -> GCS + BigQuery.")
 
 
 if __name__ == "__main__":
