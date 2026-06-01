@@ -17,3 +17,8 @@ output "archive_bucket" {
   description = "Bucket holding raw archived events."
   value       = module.raw_archive.bucket_name
 }
+
+output "service_account_emails" {
+  description = "Workload identities created for the pipeline."
+  value       = module.iam.emails
+}

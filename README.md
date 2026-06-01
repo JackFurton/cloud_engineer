@@ -75,12 +75,38 @@ You'll see events published, pulled, and written to
 | CloudFormation | Deployment Manager (rare) — **Terraform** is standard | |
 | CloudWatch | Cloud Monitoring + Cloud Logging | |
 
+## IAM design notes (coming from AWS)
+
+GCP inverts the AWS model. Instead of writing a policy document and attaching it,
+you **bind a member to a role on a resource**:
+
+```
+member: serviceAccount:telemetry-processor@<project>...   (who)
+role:   roles/pubsub.subscriber                            (what)
+on:     the telemetry-events-sub subscription              (where)  <-- the key part
+```
+
+What this project does on purpose:
+- **One service account per workload** (publisher, processor) — never a shared SA.
+- **Resource-scoped bindings**, not project-wide. The publisher gets
+  `pubsub.publisher` on *one topic*; the processor gets `storage.objectCreator`
+  (create-only, not admin) on *one bucket*. See `infra/envs/dev/main.tf`.
+- **`*_iam_member`** (additive, one principal) rather than `*_iam_binding`
+  (authoritative, overwrites the whole list) or `*_iam_policy` (replaces
+  everything). `member` is the safe default — it can't accidentally revoke
+  grants made elsewhere. This `member` vs `binding` vs `policy` distinction is a
+  classic Terraform-GCP gotcha worth knowing cold.
+
+Role tiers, fyi: **primitive** (Owner/Editor/Viewer — too broad, avoid),
+**predefined** (`roles/pubsub.subscriber` — what we use), **custom** (hand-pick
+permissions when predefined is still too wide).
+
 ## Status
 
 - [x] Terraform skeleton: `pubsub` + `storage` modules, `dev` env, validating
 - [x] Local emulator stack (`local/docker-compose.yml`) — Pub/Sub + GCS
 - [x] Python pipeline: publisher → Pub/Sub → processor → GCS archive, running locally
-- [ ] `iam` module (service accounts + least-privilege bindings)
+- [x] `iam` module (service accounts + resource-scoped least-privilege bindings)
 - [ ] `bigquery` module (dataset + table for analytics)
 - [ ] `terraform test` suites with mocked providers
 - [ ] Processor also writes to BigQuery (add emulator)
